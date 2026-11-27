@@ -69,6 +69,7 @@ func (h *Handler) Routes(r *gin.Engine) {
 	p.GET("/elections/:id", h.GetElection)
 	p.PUT("/elections/:id", h.UpdateElection)
 	p.DELETE("/elections/:id", h.DeleteElection)
+	p.POST("/elections/:id/duplicate", h.DuplicateElection)
 	p.POST("/elections/:id/open", h.OpenElection)
 	p.POST("/elections/:id/close", h.CloseElection)
 	p.POST("/elections/:id/reopen", h.ReopenElection)
@@ -77,6 +78,7 @@ func (h *Handler) Routes(r *gin.Engine) {
 
 	p.GET("/elections/:id/candidates", h.ListCandidates)
 	p.POST("/elections/:id/candidates", h.CreateCandidate)
+	p.POST("/elections/:id/candidates/add-voters", h.AddCandidateVoters)
 	p.PUT("/elections/:id/candidates/:cid", h.UpdateCandidate)
 	p.DELETE("/elections/:id/candidates/:cid", h.DeleteCandidate)
 

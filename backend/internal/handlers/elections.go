@@ -170,21 +170,87 @@ func (h *Handler) UpdateElection(c *gin.Context) {
 		badRequest(c, msg)
 		return
 	}
-	if e.Status != "draft" && in.Digits != e.Digits {
-		conflict(c, "não é possível alterar os dígitos após abrir a votação")
+	err := h.updateElection(c, e.ID, in)
+	if errors.Is(err, errTooManyCandidates) || errors.Is(err, errDigitsLocked) {
+		conflict(c, err.Error())
 		return
 	}
-	if e.Status == "draft" && in.Digits != e.Digits && e.CandidateCnt > 0 {
-		conflict(c, "remova os candidatos antes de alterar a quantidade de dígitos")
-		return
-	}
-	if _, err := h.DB.ExecContext(c, `UPDATE elections SET title=?, description=?, office=?, digits=? WHERE id=?`,
-		in.Title, emptyToNull(strings.TrimSpace(in.Description)), in.Office, in.Digits, e.ID); err != nil {
+	if err != nil {
 		serverError(c, err)
 		return
 	}
 	e, _ = h.loadElection(c, e.ID)
 	c.JSON(http.StatusOK, e)
+}
+
+var (
+	errTooManyCandidates = errors.New("há candidatos demais: com 1 dígito o limite é 9")
+	errDigitsLocked      = errors.New("não é possível alterar os dígitos após abrir a votação")
+)
+
+// updateElection grava os dados e, se a quantidade de dígitos mudar, renumera os candidatos.
+func (h *Handler) updateElection(ctx context.Context, id uint64, in electionInput) error {
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var (
+		status string
+		digits int
+	)
+	if err := tx.QueryRowContext(ctx, `SELECT status, digits FROM elections WHERE id=? FOR UPDATE`, id).Scan(&status, &digits); err != nil {
+		return err
+	}
+	if in.Digits != digits {
+		if status != "draft" {
+			return errDigitsLocked
+		}
+		if err := renumberCandidates(ctx, tx, id, in.Digits); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE elections SET title=?, description=?, office=?, digits=? WHERE id=?`,
+		in.Title, emptyToNull(strings.TrimSpace(in.Description)), in.Office, in.Digits, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func renumberCandidates(ctx context.Context, tx *sql.Tx, electionID uint64, digits int) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, number FROM candidates WHERE election_id=? ORDER BY number`, electionID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var (
+		ids []uint64
+		old []string
+	)
+	for rows.Next() {
+		var (
+			id uint64
+			n  string
+		)
+		if err := rows.Scan(&id, &n); err != nil {
+			return err
+		}
+		ids, old = append(ids, id), append(old, n)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	numbers, ok := renumber(old, digits)
+	if !ok {
+		return errTooManyCandidates
+	}
+	// o tamanho muda junto com os dígitos, então não há colisão com números antigos
+	for i, id := range ids {
+		if _, err := tx.ExecContext(ctx, `UPDATE candidates SET number=? WHERE id=?`, numbers[i], id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *Handler) DeleteElection(c *gin.Context) {

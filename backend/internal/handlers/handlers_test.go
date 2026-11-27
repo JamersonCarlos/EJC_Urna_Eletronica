@@ -73,6 +73,36 @@ func TestNextCandidateNumber(t *testing.T) {
 	}
 }
 
+func TestRenumber(t *testing.T) {
+	cases := []struct {
+		old    []string
+		digits int
+		want   string // vazio = não cabe
+	}{
+		{[]string{"01", "02", "05"}, 3, "001,002,005"},
+		{[]string{"001", "012"}, 2, "01,12"},
+		{[]string{"01", "03"}, 1, "1,3"},
+		{[]string{"01", "12", "40"}, 1, "1,2,3"},
+		{[]string{"02", "15", "01"}, 1, "2,3,1"},
+		{strings.Fields("01 02 03 04 05 06 07 08 09 10"), 1, ""},
+	}
+	for i, c := range cases {
+		got, ok := renumber(c.old, c.digits)
+		if strings.Join(got, ",") != c.want || ok != (c.want != "") {
+			t.Errorf("caso %d: esperado %q, veio %v", i, c.want, got)
+		}
+	}
+}
+
+func TestCopyTitle(t *testing.T) {
+	if got := copyTitle("Eleição"); got != "Eleição (cópia)" {
+		t.Fatal(got)
+	}
+	if got := copyTitle(strings.Repeat("é", 80)); len(got) > 160 || !strings.HasSuffix(got, " (cópia)") {
+		t.Fatalf("título fora do limite: %d", len(got))
+	}
+}
+
 func TestBrokenLink(t *testing.T) {
 	link := func(id uint64, prev, hash string) chainLink {
 		return chainLink{voteID: id, prev: prev, hash: hash, expected: hash}

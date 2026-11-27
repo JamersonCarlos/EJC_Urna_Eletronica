@@ -1,28 +1,4 @@
 services:
-  # ── Banco (MySQL 8) ───────────────────────────────────────────────────────
-  # Se já existir um MySQL compartilhado na rede agresernet, remova este
-  # serviço e aponte DB_HOST para ele.
-  urna-mysql:
-    image: mysql:8.4
-    container_name: urna-mysql
-    restart: unless-stopped
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--default-time-zone=+00:00"]
-    environment:
-      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
-      MYSQL_DATABASE: "${DB_NAME}"
-      MYSQL_USER: "${DB_USER}"
-      MYSQL_PASSWORD: "${DB_PASSWORD}"
-    volumes:
-      - urna-mysql-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-    networks:
-      - agresernet
-
   # ── Backend (Go/Gin) ──────────────────────────────────────────────────────
   urna-backend:
     image: ghcr.io/jamersoncarlos/urna-backend:latest
@@ -31,9 +7,9 @@ services:
     environment:
       APP_ENV: production
       PORT: "8080"
-      FRONTEND_URL: "https://urna.agreser.tech"
+      FRONTEND_URL: "https://ejc-urna.agreser.tech"
       JWT_SECRET: "${JWT_SECRET}"
-      DB_HOST: "${DB_HOST:-urna-mysql}"
+      DB_HOST: "${DB_HOST}"
       DB_PORT: "${DB_PORT:-3306}"
       DB_USER: "${DB_USER}"
       DB_PASSWORD: "${DB_PASSWORD}"
@@ -41,21 +17,20 @@ services:
       CLOUDINARY_URL: "${CLOUDINARY_URL:-}"
       CLOUDINARY_FOLDER: "${CLOUDINARY_FOLDER:-urna/candidatos}"
     depends_on:
-      urna-mysql:
-        condition: service_healthy
+      - urna-seed
     networks:
       - agresernet
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=agresernet"
       # HTTPS Router (REST + WebSocket)
-      - "traefik.http.routers.urna-backend.rule=Host(`api-urna.agreser.tech`)"
+      - "traefik.http.routers.urna-backend.rule=Host(`api-ejc-urna.agreser.tech`)"
       - "traefik.http.routers.urna-backend.entrypoints=websecure"
       - "traefik.http.routers.urna-backend.tls=true"
       - "traefik.http.routers.urna-backend.tls.certresolver=letsencryptresolver"
 
       # HTTP Redirect
-      - "traefik.http.routers.urna-backend-http.rule=Host(`api-urna.agreser.tech`)"
+      - "traefik.http.routers.urna-backend-http.rule=Host(`api-ejc-urna.agreser.tech`)"
       - "traefik.http.routers.urna-backend-http.entrypoints=web"
       - "traefik.http.routers.urna-backend-http.middlewares=urna-https-redirect"
 
@@ -67,10 +42,14 @@ services:
   urna-seed:
     image: ghcr.io/jamersoncarlos/urna-backend:latest
     container_name: urna-seed
-    restart: "no"
     entrypoint: ["/seed"]
+    # roda uma vez; só repete se falhar (no Swarm o padrão seria reiniciar sempre)
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
     environment:
-      DB_HOST: "${DB_HOST:-urna-mysql}"
+      DB_HOST: "${DB_HOST}"
       DB_PORT: "${DB_PORT:-3306}"
       DB_USER: "${DB_USER}"
       DB_PASSWORD: "${DB_PASSWORD}"
@@ -79,9 +58,6 @@ services:
       ADMIN_EMAIL: "${ADMIN_EMAIL}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
       SEED_DEMO: "${SEED_DEMO:-false}"
-    depends_on:
-      urna-mysql:
-        condition: service_healthy
     networks:
       - agresernet
 
@@ -91,7 +67,7 @@ services:
     container_name: urna-frontend
     restart: unless-stopped
     environment:
-      VITE_API_URL: "${VITE_API_URL:-https://api-urna.agreser.tech}"
+      VITE_API_URL: "${VITE_API_URL:-https://api-ejc-urna.agreser.tech}"
     depends_on:
       - urna-backend
     networks:
@@ -100,21 +76,18 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=agresernet"
       # Router HTTPS
-      - "traefik.http.routers.urna-frontend-secure.rule=Host(`urna.agreser.tech`)"
+      - "traefik.http.routers.urna-frontend-secure.rule=Host(`ejc-urna.agreser.tech`)"
       - "traefik.http.routers.urna-frontend-secure.entrypoints=websecure"
       - "traefik.http.routers.urna-frontend-secure.tls=true"
       - "traefik.http.routers.urna-frontend-secure.tls.certresolver=letsencryptresolver"
       - "traefik.http.routers.urna-frontend-secure.service=urna-frontend-svc"
       # Router HTTP Redirect
-      - "traefik.http.routers.urna-frontend-http.rule=Host(`urna.agreser.tech`)"
+      - "traefik.http.routers.urna-frontend-http.rule=Host(`ejc-urna.agreser.tech`)"
       - "traefik.http.routers.urna-frontend-http.entrypoints=web"
       - "traefik.http.routers.urna-frontend-http.middlewares=urna-https-redirect"
 
       # Service
       - "traefik.http.services.urna-frontend-svc.loadbalancer.server.port=80"
-
-volumes:
-  urna-mysql-data:
 
 networks:
   agresernet:

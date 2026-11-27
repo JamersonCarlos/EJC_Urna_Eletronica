@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -75,8 +78,39 @@ func (in *voterInput) normalize() string {
 	return ""
 }
 
+// autoCode reconhece as identificações geradas pelo sistema.
+var autoCode = regexp.MustCompile(`^E[0-9]{4,}$`)
+
+// matchCandidateVoter evita duplicar quem já entrou na lista por ser candidato.
+// Se a linha traz uma identificação e o eleitor só tem a automática, ela é adotada.
+func matchCandidateVoter(ctx context.Context, tx *sql.Tx, electionID uint64, v voterInput) (bool, error) {
+	var (
+		id  uint64
+		doc string
+	)
+	err := tx.QueryRowContext(ctx, `SELECT id, document FROM voters WHERE election_id=? AND name=? AND candidate_id IS NOT NULL ORDER BY id LIMIT 1`,
+		electionID, v.Name).Scan(&id, &doc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if v.Document == "" || v.Document == doc {
+		return true, nil
+	}
+	if !autoCode.MatchString(doc) {
+		return false, nil // identificações diferentes: são pessoas diferentes
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE voters SET document=? WHERE id=?`, v.Document, id)
+	if isDuplicate(err) {
+		return true, nil
+	}
+	return true, err
+}
+
 // nextCode gera uma identificação sequencial (E0001...) quando não for informada.
-func (h *Handler) nextCode(c *gin.Context, tx *sql.Tx, electionID uint64) (string, error) {
+func (h *Handler) nextCode(c context.Context, tx *sql.Tx, electionID uint64) (string, error) {
 	var n int
 	if err := tx.QueryRowContext(c, `SELECT COUNT(*) FROM voters WHERE election_id=?`, electionID).Scan(&n); err != nil {
 		return "", err
@@ -100,12 +134,20 @@ func (h *Handler) insertVoters(c *gin.Context, electionID uint64, list []voterIn
 	}
 	defer tx.Rollback()
 	for _, v := range list {
+		found, err := matchCandidateVoter(c, tx, electionID, v)
+		if err != nil {
+			return 0, nil, err
+		}
+		if found {
+			skipped = append(skipped, v.Name+" (já está na lista como candidato)")
+			continue
+		}
 		if v.Document == "" {
 			if v.Document, err = h.nextCode(c, tx, electionID); err != nil {
 				return 0, nil, err
 			}
 		}
-		_, err := tx.ExecContext(c, `INSERT INTO voters (election_id, name, document) VALUES (?,?,?)`, electionID, v.Name, v.Document)
+		_, err = tx.ExecContext(c, `INSERT INTO voters (election_id, name, document) VALUES (?,?,?)`, electionID, v.Name, v.Document)
 		if isDuplicate(err) {
 			skipped = append(skipped, v.Name+" ("+v.Document+")")
 			continue
@@ -142,7 +184,7 @@ func (h *Handler) CreateVoter(c *gin.Context) {
 		return
 	}
 	if created == 0 && len(skipped) > 0 {
-		conflict(c, "já existe um eleitor com essa identificação")
+		conflict(c, "eleitor não adicionado, já cadastrado: "+skipped[0])
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"created": created})

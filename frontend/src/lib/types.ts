@@ -23,6 +23,7 @@ export interface Candidate {
   name: string;
   party: string | null;
   photo_url: string | null;
+  is_voter: boolean;
 }
 
 export interface Voter {

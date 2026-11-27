@@ -12,8 +12,14 @@ export default function CandidatesTab({ election, onChange }: { election: Electi
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [selected, setSelected] = useState<number[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [voterMsg, setVoterMsg] = useState<{ kind: 'error' | 'ok'; text: string } | null>(null);
   const editingNumber = list.find((c) => c.id === editing)?.number;
   const editable = election.status === 'draft';
+  const canAddVoters = election.status !== 'closed';
+  const notVoters = list.filter((c) => !c.is_voter).map((c) => c.id);
+  const chosen = selected.filter((id) => notVoters.includes(id));
 
   const load = useCallback(() => api<Candidate[]>(`/api/elections/${election.id}/candidates`).then(setList), [election.id]);
   useEffect(() => {
@@ -66,6 +72,29 @@ export default function CandidatesTab({ election, onChange }: { election: Electi
     }
   };
 
+  const toggle = (id: number) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+
+  const addAsVoters = async () => {
+    setVoterMsg(null);
+    setAdding(true);
+    try {
+      const r = await api<{ created: number; linked: number; already: number }>(`/api/elections/${election.id}/candidates/add-voters`, {
+        method: 'POST',
+        body: { candidate_ids: chosen },
+      });
+      const parts = [`${r.created} eleitor(es) adicionado(s).`];
+      if (r.linked) parts.push(`${r.linked} já estava(m) na lista com o mesmo nome.`);
+      setVoterMsg({ kind: 'ok', text: parts.join(' ') });
+      setSelected([]);
+      await load();
+      onChange();
+    } catch (err) {
+      setVoterMsg({ kind: 'error', text: errMsg(err) });
+    } finally {
+      setAdding(false);
+    }
+  };
+
   const remove = async (c: Candidate) => {
     if (!confirm(`Remover ${c.name} (${c.number})?`)) return;
     try {
@@ -88,7 +117,7 @@ export default function CandidatesTab({ election, onChange }: { election: Electi
                 Número <b>{editingNumber}</b> (não muda).
               </>
             ) : (
-              'O número é gerado automaticamente, na ordem de inclusão.'
+              'O número é gerado automaticamente, na ordem de inclusão. O candidato também entra na lista de eleitores.'
             )}
           </p>
           <label>
@@ -146,16 +175,37 @@ export default function CandidatesTab({ election, onChange }: { election: Electi
             {generating ? 'Gerando PDF…' : 'Baixar PDF'}
           </button>
         </div>
+        {canAddVoters && notVoters.length > 0 && (
+          <div className="row-between">
+            <label className="check">
+              <input type="checkbox" checked={chosen.length === notVoters.length} onChange={(e) => setSelected(e.target.checked ? notVoters : [])} />
+              Selecionar os {notVoters.length} que não são eleitores
+            </label>
+            <button className="btn primary sm" disabled={!chosen.length || adding} onClick={() => void addAsVoters()}>
+              {adding ? 'Adicionando…' : `Adicionar como eleitor (${chosen.length})`}
+            </button>
+          </div>
+        )}
+        {voterMsg && <div className={`alert ${voterMsg.kind}`}>{voterMsg.text}</div>}
         {list.length === 0 ? (
           <p className="muted">Nenhum candidato cadastrado.</p>
         ) : (
           <ul className="cand-list">
             {list.map((c) => (
               <li key={c.id}>
+                {canAddVoters && notVoters.length > 0 && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Selecionar ${c.name}`}
+                    checked={c.is_voter || chosen.includes(c.id)}
+                    disabled={c.is_voter}
+                    onChange={() => toggle(c.id)}
+                  />
+                )}
                 <span className="cand-num">{c.number}</span>
                 {c.photo_url ? <img src={c.photo_url} alt="" className="avatar" /> : <span className="avatar ph">{c.name[0]}</span>}
                 <div className="grow">
-                  <b>{c.name}</b>
+                  <b>{c.name}</b> {c.is_voter && <span className="pill ok">Eleitor</span>}
                   {c.party && <div className="muted small">{c.party}</div>}
                 </div>
                 {editable && (

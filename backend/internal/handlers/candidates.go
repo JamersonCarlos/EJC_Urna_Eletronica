@@ -20,6 +20,7 @@ type Candidate struct {
 	Name     string  `json:"name"`
 	Party    *string `json:"party"`
 	PhotoURL *string `json:"photo_url"`
+	IsVoter  bool    `json:"is_voter"`
 }
 
 var onlyDigits = regexp.MustCompile(`^[0-9]+$`)
@@ -32,7 +33,9 @@ func isDuplicate(err error) bool {
 }
 
 func (h *Handler) listCandidates(c *gin.Context, electionID uint64) ([]Candidate, error) {
-	rows, err := h.DB.QueryContext(c, `SELECT id, number, name, party, photo_url FROM candidates WHERE election_id=? ORDER BY number`, electionID)
+	rows, err := h.DB.QueryContext(c, `SELECT id, number, name, party, photo_url,
+		EXISTS(SELECT 1 FROM voters v WHERE v.candidate_id = candidates.id)
+		FROM candidates WHERE election_id=? ORDER BY number`, electionID)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +46,7 @@ func (h *Handler) listCandidates(c *gin.Context, electionID uint64) ([]Candidate
 			cd          Candidate
 			party, foto sql.NullString
 		)
-		if err := rows.Scan(&cd.ID, &cd.Number, &cd.Name, &party, &foto); err != nil {
+		if err := rows.Scan(&cd.ID, &cd.Number, &cd.Name, &party, &foto, &cd.IsVoter); err != nil {
 			return nil, err
 		}
 		cd.Party, cd.PhotoURL = nullStr(party), nullStr(foto)
@@ -67,14 +70,46 @@ func (h *Handler) ListCandidates(c *gin.Context) {
 
 const maxCandidateNumber = 99
 
+func candidateLimit(digits int) int {
+	if digits == 1 {
+		return 9
+	}
+	return maxCandidateNumber
+}
+
+// renumber converte os números para a nova quantidade de dígitos. Cada candidato
+// mantém o valor quando ele cabe; os demais recebem o menor número livre.
+func renumber(old []string, digits int) ([]string, bool) {
+	limit := candidateLimit(digits)
+	if len(old) > limit {
+		return nil, false
+	}
+	values := make([]int, len(old))
+	taken := map[int]bool{}
+	for i, s := range old {
+		if n, err := strconv.Atoi(s); err == nil && n >= 1 && n <= limit && !taken[n] {
+			values[i], taken[n] = n, true
+		}
+	}
+	out := make([]string, len(old))
+	next := 1
+	for i, n := range values {
+		if n == 0 {
+			for taken[next] {
+				next++
+			}
+			n, taken[next] = next, true
+		}
+		out[i] = fmt.Sprintf("%0*d", digits, n)
+	}
+	return out, true
+}
+
 // nextCandidateNumber devolve o próximo número na ordem de inserção (1 a 99, ou
 // 1 a 9 em eleições de um dígito), com zeros à esquerda. Ao chegar no limite,
 // reaproveita o menor número livre.
 func nextCandidateNumber(used []string, digits int) (string, bool) {
-	limit := maxCandidateNumber
-	if digits == 1 {
-		limit = 9
-	}
+	limit := candidateLimit(digits)
 	taken := map[int]bool{}
 	highest := 0
 	for _, s := range used {
@@ -122,15 +157,16 @@ func (in *candidateInput) validate() string {
 
 var errNoNumberLeft = errors.New("todos os números disponíveis já estão em uso")
 
-// insertCandidate gera o número e grava o candidato com a eleição travada,
-// para que cadastros simultâneos não recebam o mesmo número.
-func (h *Handler) insertCandidate(ctx context.Context, electionID uint64, digits int, in candidateInput) (uint64, string, error) {
+// insertCandidate gera o número, grava o candidato e o inclui como eleitor, com a
+// eleição travada para que cadastros simultâneos não recebam o mesmo número.
+func (h *Handler) insertCandidate(ctx context.Context, electionID uint64, in candidateInput) (uint64, string, error) {
 	tx, err := h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, "", err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT id FROM elections WHERE id=? FOR UPDATE`, electionID); err != nil {
+	var digits int
+	if err := tx.QueryRowContext(ctx, `SELECT digits FROM elections WHERE id=? FOR UPDATE`, electionID).Scan(&digits); err != nil {
 		return 0, "", err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT number FROM candidates WHERE election_id=?`, electionID)
@@ -162,6 +198,9 @@ func (h *Handler) insertCandidate(ctx context.Context, electionID uint64, digits
 	if err != nil {
 		return 0, "", err
 	}
+	if _, err := h.ensureCandidateVoter(ctx, tx, electionID, uint64(id), in.Name); err != nil {
+		return 0, "", err
+	}
 	return uint64(id), number, tx.Commit()
 }
 
@@ -183,7 +222,7 @@ func (h *Handler) CreateCandidate(c *gin.Context) {
 		badRequest(c, msg)
 		return
 	}
-	id, number, err := h.insertCandidate(c, e.ID, e.Digits, in)
+	id, number, err := h.insertCandidate(c, e.ID, in)
 	if errors.Is(err, errNoNumberLeft) {
 		conflict(c, err.Error())
 		return
@@ -192,7 +231,7 @@ func (h *Handler) CreateCandidate(c *gin.Context) {
 		serverError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, Candidate{ID: id, Number: number, Name: in.Name,
+	c.JSON(http.StatusCreated, Candidate{ID: id, Number: number, Name: in.Name, IsVoter: true,
 		Party: nullStr(emptyToNull(in.Party)), PhotoURL: nullStr(emptyToNull(in.PhotoURL))})
 }
 
@@ -220,7 +259,9 @@ func (h *Handler) UpdateCandidate(c *gin.Context) {
 		return
 	}
 	var number string
-	err := h.DB.QueryRowContext(c, `SELECT number FROM candidates WHERE id=? AND election_id=?`, cid, e.ID).Scan(&number)
+	var isVoter bool
+	err := h.DB.QueryRowContext(c, `SELECT number, EXISTS(SELECT 1 FROM voters v WHERE v.candidate_id = candidates.id)
+		FROM candidates WHERE id=? AND election_id=?`, cid, e.ID).Scan(&number, &isVoter)
 	if errors.Is(err, sql.ErrNoRows) {
 		notFound(c, "candidato não encontrado")
 		return
@@ -234,7 +275,7 @@ func (h *Handler) UpdateCandidate(c *gin.Context) {
 		serverError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, Candidate{ID: cid, Number: number, Name: in.Name,
+	c.JSON(http.StatusOK, Candidate{ID: cid, Number: number, Name: in.Name, IsVoter: isVoter,
 		Party: nullStr(emptyToNull(in.Party)), PhotoURL: nullStr(emptyToNull(in.PhotoURL))})
 }
 

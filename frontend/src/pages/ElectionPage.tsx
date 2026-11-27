@@ -17,6 +17,7 @@ export default function ElectionPage() {
   const [params, setParams] = useSearchParams();
   const [election, setElection] = useState<Election | null>(null);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -43,6 +44,35 @@ export default function ElectionPage() {
       setParams({}, { replace: true });
     } catch (e) {
       alert(errMsg(e));
+    }
+  };
+
+  const duplicate = async () => {
+    if (!window.confirm('Duplicar esta eleição? Candidatos e eleitores são copiados para uma nova eleição, sem os votos.')) return;
+    setBusy(true);
+    try {
+      const copy = await api<Election>(`/api/elections/${eid}/duplicate`, { method: 'POST' });
+      setElection(copy);
+      nav(`/eleicoes/${copy.id}`);
+    } catch (e) {
+      alert(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeDigits = async (digits: number) => {
+    if (!election) return;
+    const effect = digits === 1 ? 'Números acima de 9 serão trocados por um número livre.' : 'Os candidatos mantêm o número, ajustado com zeros à esquerda.';
+    if (election.candidates_count > 0 && !window.confirm(`Alterar para ${digits} dígito(s)? ${effect} Se você já imprimiu o PDF, gere novamente.`)) return;
+    setBusy(true);
+    try {
+      const { title, office, description } = election;
+      setElection(await api<Election>(`/api/elections/${eid}`, { method: 'PUT', body: { title, office, description: description ?? '', digits } }));
+    } catch (e) {
+      alert(errMsg(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -77,7 +107,25 @@ export default function ElectionPage() {
             {election.title} <StatusBadge status={election.status} />
           </h1>
           <p className="muted">
-            Cargo: {election.office} · Número com {election.digits} dígito(s)
+            Cargo: {election.office} · Número com{' '}
+            {election.status === 'draft' ? (
+              <select
+                className="inline-select"
+                aria-label="Quantidade de dígitos"
+                value={election.digits}
+                disabled={busy}
+                onChange={(e) => void changeDigits(Number(e.target.value))}
+              >
+                {[1, 2, 3, 4, 5].map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              election.digits
+            )}{' '}
+            dígito(s)
             {election.description ? ` · ${election.description}` : ''}
           </p>
         </div>
@@ -110,6 +158,9 @@ export default function ElectionPage() {
               ↺ Reabrir urna
             </button>
           )}
+          <button className="btn" disabled={busy} onClick={() => void duplicate()}>
+            ⧉ Duplicar
+          </button>
           {election.status !== 'open' && (
             <button className="btn ghost danger-text" onClick={remove}>
               Excluir
@@ -128,8 +179,8 @@ export default function ElectionPage() {
           ))}
       </nav>
 
-      {tab === 'candidatos' && <CandidatesTab election={election} onChange={reload} />}
-      {tab === 'eleitores' && <VotersTab election={election} onChange={reload} />}
+      {tab === 'candidatos' && <CandidatesTab key={`${election.id}-${election.digits}`} election={election} onChange={reload} />}
+      {tab === 'eleitores' && <VotersTab key={election.id} election={election} onChange={reload} />}
       {tab === 'mesa' && election.status === 'open' && <MesaTab election={election} onChange={reload} />}
       {tab === 'resultado' && election.status === 'closed' && <ResultsTab election={election} />}
     </>

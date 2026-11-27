@@ -32,13 +32,19 @@ Regras da urna (iguais às da urna oficial):
 
 ## Candidatos
 
-- **Número automático:** gerado na ordem de inclusão, de 1 a 99 (com zeros à esquerda conforme os dígitos da eleição; com 1 dígito, o limite é 9). O número não muda na edição. Se o limite for atingido, o menor número livre é reaproveitado.
+- **Número automático:** gerado na ordem de inclusão, de 1 a 99 (com zeros à esquerda conforme os dígitos da eleição; com 1 dígito, o limite é 9). O número não muda na edição do candidato. Se o limite for atingido, o menor número livre é reaproveitado.
 - **Foto:** upload para o Cloudinary (JPG, PNG ou WEBP, até 5 MB). Configure `CLOUDINARY_URL=cloudinary://API_KEY:API_SECRET@CLOUD_NAME` no backend (`CLOUDINARY_FOLDER` é opcional). Sem ela, ainda é possível colar a URL da foto.
+- **Também é eleitor:** todo candidato cadastrado entra na lista de eleitores. Para os cadastrados antes disso, selecione-os na aba Candidatos e clique em **Adicionar como eleitor**. Quem já está na lista com o mesmo nome não é duplicado.
+- **Dígitos:** podem ser alterados enquanto a eleição está em preparação. Os candidatos mantêm o número, com zeros à esquerda (ao reduzir para 1 dígito, números acima de 9 são trocados).
 - **PDF:** o botão "Baixar PDF" gera cards com foto, primeiro e segundo nome e número (A4, 3 colunas x 6 linhas, 18 por página).
 
 ## Desfazer voto
 
 Na mesa receptora, marque "mostrar quem já votou" e use **Desfazer voto**. Só funciona com a votação aberta. O voto anterior não é apagado: é marcado como anulado, deixa de contar, e a anulação entra na cadeia de hash. A apuração lista quem teve o voto desfeito, quando e por quem (sem revelar o voto anulado).
+
+## Duplicar eleição
+
+O botão **Duplicar** cria uma nova eleição em preparação com os mesmos dados, candidatos e eleitores. Votos e link da urna não são copiados.
 
 ## Reabrir a urna
 
@@ -109,11 +115,11 @@ Acesse `http://localhost:5173`. Para testar a urna no celular na mesma rede, use
 
 ## Deploy (VPS + Traefik)
 
-1. Ajuste os domínios no `docker-compose.yml` (padrão: `urna.agreser.tech` e `api-urna.agreser.tech`) e o `FRONTEND_URL`.
-2. Cadastre os secrets do repositório: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_PORT` (opcional), `GHCR_TOKEN`, `JWT_SECRET`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `MYSQL_ROOT_PASSWORD`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `CLOUDINARY_URL`.
+1. Ajuste os domínios no `docker-compose.yml` (padrão: `ejc-urna.agreser.tech` e `api-ejc-urna.agreser.tech`) e o `FRONTEND_URL`.
+2. Cadastre os secrets do repositório: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_PORT` (opcional), `GHCR_TOKEN`, `JWT_SECRET`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_HOST`, `DB_PORT` (opcional), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `CLOUDINARY_URL`.
 3. Push na `main` → testes (Go + MySQL de serviço, build do front) → imagens no GHCR → `docker compose pull && up -d` na VPS em `/opt/apps/urna`.
 
-O `urna-seed` roda a cada deploy e é idempotente (aplica migrations novas e só cria o mesário se ele não existir). Se você já tem um MySQL compartilhado na `agresernet`, remova o serviço `urna-mysql` e aponte `DB_HOST` para ele.
+O `urna-seed` roda a cada deploy e é idempotente (aplica migrations novas e só cria o mesário se ele não existir). O compose não sobe banco: `DB_HOST` deve apontar para um MySQL existente, acessível pela rede `agresernet`, com o database e o usuário já criados.
 
 O WebSocket passa pelo Traefik sem configuração extra. Se o domínio estiver atrás do proxy da Cloudflare, mantenha **WebSockets** habilitado (Network → WebSockets).
 
@@ -128,6 +134,8 @@ Autenticadas com `Authorization: Bearer <jwt>` (WS: `?access_token=`).
 | GET/POST | `/api/elections` | listar / criar |
 | GET/PUT/DELETE | `/api/elections/:id` | detalhar / editar / excluir |
 | POST | `/api/elections/:id/open` · `/close` · `/reopen` | abrir / encerrar / reabrir |
+| POST | `/api/elections/:id/duplicate` | duplicar a eleição (sem votos) |
+| POST | `/api/elections/:id/candidates/add-voters` | incluir candidatos como eleitores `{ "candidate_ids": [] }` |
 | POST | `/api/elections/:id/urna-link` | gera novo link da urna |
 | GET/POST/PUT/DELETE | `/api/elections/:id/candidates[/:cid]` | candidatos (só em preparação) |
 | GET/POST/PUT/DELETE | `/api/elections/:id/voters[/:vid]` | eleitores (`?q=`, `?status=voted\|pending`) |
