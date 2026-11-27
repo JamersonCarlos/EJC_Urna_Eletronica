@@ -4,7 +4,7 @@ Sistema de votação para grupos (escolha de representante) com **urna no celula
 
 - **Backend:** Go 1.24 + Gin + gorilla/websocket + MySQL 8
 - **Frontend:** React 18 + TypeScript + Vite (servido por Nginx)
-- **Deploy:** imagens no GHCR (`ghcr.io/agreser-innovations/urna-*`), Traefik na rede `agresernet`, CI/CD no GitHub Actions
+- **Deploy:** imagens no GHCR (`ghcr.io/jamersoncarlos/urna-*`), Traefik na rede `agresernet`, CI/CD no GitHub Actions
 
 ## Como funciona
 

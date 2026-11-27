@@ -25,7 +25,7 @@ services:
 
   # ── Backend (Go/Gin) ──────────────────────────────────────────────────────
   urna-backend:
-    image: ghcr.io/agreser-innovations/urna-backend:latest
+    image: ghcr.io/jamersoncarlos/urna-backend:latest
     container_name: urna-backend
     restart: unless-stopped
     environment:
@@ -65,7 +65,7 @@ services:
 
   # ── Seed (migrations + usuário mesário) ───────────────────────────────────
   urna-seed:
-    image: ghcr.io/agreser-innovations/urna-backend:latest
+    image: ghcr.io/jamersoncarlos/urna-backend:latest
     container_name: urna-seed
     restart: "no"
     entrypoint: ["/seed"]
@@ -87,7 +87,7 @@ services:
 
   # ── Frontend (React + Nginx) ──────────────────────────────────────────────
   urna-frontend:
-    image: ghcr.io/agreser-innovations/urna-frontend:latest
+    image: ghcr.io/jamersoncarlos/urna-frontend:latest
     container_name: urna-frontend
     restart: unless-stopped
     environment:
