@@ -1,0 +1,5 @@
+.env
+.env.local
+backend/bin/
+.DS_Store
+*.tsbuildinfo
